@@ -1,3 +1,12 @@
+---
+id: "ontology"
+title: "知识库元结构"
+type: "meta"
+created: "2026-07-07"
+updated: "2026-07-07"
+status: "active"
+---
+
 # 知识库元结构
 
 > 本文件是当前知识结构的「活契约」。AI 在每次 `/construct`、`/digest`、`/analyze` 前都应读取它。

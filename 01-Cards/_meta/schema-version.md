@@ -1,3 +1,12 @@
+---
+id: "schema-version"
+title: "Schema 版本日志"
+type: "meta"
+created: "2026-07-07"
+updated: "2026-07-07"
+status: "active"
+---
+
 # Schema 版本日志
 
 ## v3.0 — 2026-07-07
