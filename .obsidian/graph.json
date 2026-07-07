@@ -1,0 +1,65 @@
+{
+  "collapse-filter": false,
+  "search": "-path:00-Inbox -path:03-Archive -file:README.md -file:AGENTS.md -file:_article_*.txt -file:article_preview.txt -file:_check_links.txt -file:_fix_all.py",
+  "showTags": false,
+  "showAttachments": false,
+  "hideUnresolved": false,
+  "showOrphans": true,
+  "collapse-color-groups": false,
+  "colorGroups": [
+    {
+      "query": "tag:#type/relation",
+      "color": {
+        "a": 1,
+        "rgb": 16747520
+      }
+    },
+    {
+      "query": "tag:#type/conflict",
+      "color": {
+        "a": 1,
+        "rgb": 14423100
+      }
+    },
+    {
+      "query": "tag:#type/concept",
+      "color": {
+        "a": 1,
+        "rgb": 4286945
+      }
+    },
+    {
+      "query": "tag:#type/entity",
+      "color": {
+        "a": 1,
+        "rgb": 9055202
+      }
+    },
+    {
+      "query": "tag:#type/profile",
+      "color": {
+        "a": 1,
+        "rgb": 9127187
+      }
+    },
+    {
+      "query": "tag:#status/seed",
+      "color": {
+        "a": 1,
+        "rgb": 11119017
+      }
+    }
+  ],
+  "collapse-display": false,
+  "showArrow": true,
+  "textFadeMultiplier": 0,
+  "nodeSizeMultiplier": 1.2,
+  "lineSizeMultiplier": 1,
+  "collapse-forces": false,
+  "centerStrength": 0.4,
+  "repelStrength": 10,
+  "linkStrength": 1,
+  "linkDistance": 200,
+  "scale": 1.1215863041398146,
+  "close": true
+}
