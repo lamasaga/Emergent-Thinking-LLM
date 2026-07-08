@@ -81,7 +81,8 @@ AI 的工作方式：
 ├── 03-Archive/                  ← 已消化的原始文档（可删除）
 │
 └── 04-OutBox/                   ← /analyze 输出目录
-    └── YYYYMMDD-主题.md
+    ├── YYYYMMDD-主题.md         ← 最终回答
+    └── YYYYMMDD-主题-context.md ← 格式化上下文包（可检查）
 ```
 
 ---
@@ -119,8 +120,8 @@ AI 的工作方式：
 **`/analyze`**：
 
 ```
-解析问题 → 读取 Profile → 读取领域与实例卡片 → 综合分析
-→ 生成回答 → 输出到 04-OutBox/
+解析问题 → 读取 Profile → 读取领域与实例卡片 → 组装 Context Package
+→ 基于 Context Package 生成回答 → 输出到 04-OutBox/
 ```
 
 ---
