@@ -6,6 +6,7 @@
       {
         "id": "530a2dff07efafc8",
         "type": "tabs",
+        "dimension": 79.71602434077079,
         "children": [
           {
             "id": "ec7a2ab2cb307f6d",
@@ -13,13 +14,37 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "_digest_report.md",
+                "file": "AGENTS.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "_digest_report"
-            }
+              "title": "AGENTS"
+            },
+            "group": "c9f3bf681b78590e"
+          }
+        ]
+      },
+      {
+        "id": "7720ebba611d9822",
+        "type": "tabs",
+        "dimension": 20.28397565922921,
+        "children": [
+          {
+            "id": "8aa505592133e650",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "AGENTS.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "AGENTS 的大纲"
+            },
+            "group": "c9f3bf681b78590e"
           }
         ]
       }
@@ -183,7 +208,7 @@
       "bases:新建数据库": false
     }
   },
-  "active": "ec7a2ab2cb307f6d",
+  "active": "8aa505592133e650",
   "lastOpenFiles": [
     "01-Cards/concepts/批判性思维.md",
     "01-Cards/concepts/建构主义.md",
