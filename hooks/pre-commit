@@ -1,0 +1,35 @@
+#!/bin/sh
+# pre-commit hook：提交前校验卡片一致性
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+SCRIPT="$PROJECT_ROOT/scripts/validate_cards.py"
+
+try_python() {
+    interpreter="$1"
+    if ! command -v "$interpreter" >/dev/null 2>&1; then
+        return 1
+    fi
+    # 先测试解释器是否真实可用（绕过 Windows App Execution Alias）
+    if ! "$interpreter" -c "import sys; sys.exit(0)" >/dev/null 2>&1; then
+        return 1
+    fi
+    "$interpreter" "$SCRIPT"
+    return $?
+}
+
+run_python() {
+    try_python python3 || try_python python || try_python py
+    if [ $? -eq 0 ]; then
+        return 0
+    fi
+    # Windows 常见安装路径兜底
+    if [ -x "/c/Users/MECHREVO/AppData/Local/Programs/Python/Python313/python.exe" ]; then
+        "/c/Users/MECHREVO/AppData/Local/Programs/Python/Python313/python.exe" "$SCRIPT"
+        return $?
+    fi
+    echo "错误：未找到可用的 Python 解释器，无法运行卡片校验脚本。"
+    echo "请修改 hooks/pre-commit 中的 Python 路径，或确保 python3/python/py 在 PATH 中。"
+    return 1
+}
+
+run_python
