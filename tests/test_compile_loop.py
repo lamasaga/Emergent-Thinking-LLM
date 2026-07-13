@@ -349,6 +349,14 @@ def test_split_text_by_paragraphs_oversized_sentence():
     assert all(count_chars(c) <= 20 for c in chunks)
 
 
+def test_split_text_by_paragraphs_flush_before_oversized():
+    text = "短段落A。\n\n短段落B。\n\n" + "很长。" * 100
+    chunks = _split_text_by_paragraphs(text, max_chars=20)
+    assert len(chunks) >= 2
+    assert chunks[0] == "短段落A。\n\n短段落B。"
+    assert all(count_chars(c) <= 20 for c in chunks)
+
+
 def test_build_compile_units_pdf(tmp_path):
     pdf = tmp_path / "book.pdf"
     _make_pdf(pdf, ["第一章内容"], toc=[[1, "第一章", 1]])
