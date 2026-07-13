@@ -228,6 +228,8 @@ def check_digest_trigger() -> bool:
         [sys.executable, str(Path(__file__).resolve().parent.parent / "check_digest_trigger.py")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return result.returncode != 0
 
@@ -238,5 +240,7 @@ def validate_buffers() -> bool:
         [sys.executable, str(Path(__file__).resolve().parent.parent / "validate_buffer.py")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return result.returncode == 0
