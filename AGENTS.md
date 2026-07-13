@@ -79,26 +79,32 @@ Step 6: 更新领域卡片和 ontology.md（如有新发现）
 **执行步骤**：
 
 ```
-1. 读取 00-Inbox/ 下全部文件。
-2. 对每篇 raw 文档进行原子化拆解：
-   a. 提取值得保留的观察、立场、概念、方法、冲突、实体等碎片。
-   b. 为每个碎片指定一个暂定 type（来自 ontology.md 的 10 个类型）。
-   c. 若无法判定 type，先放入 05-Buffer/note/。
-3. 将每个碎片写入 05-Buffer/<type>/YYYY-MM-DD-HHMMSS-关键词.md：
-   - frontmatter 必须包含 title、type、created、updated、source、status: scratch。
-   - 不写 id，不写 relations，不使用 [[ ]] 链接。
-4. 运行 `scripts/check_digest_trigger.py` 检查 scratch Buffer 数量：
+1. 扫描 `00-Inbox/` 下全部文件，识别文档类型（零散文档 / PDF 图书）。
+2. 生成编译单元队列：
+   a. 零散文档：整篇作为一个单元；若超过 3 万字则按段落/句子切分。
+   b. PDF 图书：优先按目录/章节切分；无法提取目录时按页码边界切分；
+      确保每个单元 ≤ 3 万等效中文字符。
+3. 循环消费队列：
+   a. 每轮取若干编译单元，累计字数 ≤ 3 万，组成一个批次。
+   b. 将批次文本与拆解指令交给 LLM，生成 Buffer 碎片。
+   c. 每个碎片写入 `05-Buffer/<type>/YYYY-MM-DD-HHMMSS-微秒-关键词.md`：
+      - frontmatter 必须包含 title、type、created、updated、source、status: scratch。
+      - 不写 id，不写 relations，不使用 [[ ]] 链接。
+   d. 输出本轮进度：来源、编译单元数、生成 Buffer 数。
+4. 每轮结束后运行 `scripts/validate_buffer.py` 校验新生成 Buffer。
+5. 每轮结束后运行 `scripts/check_digest_trigger.py` 检查 scratch Buffer 数量：
    - 默认阈值为 50，可通过环境变量 `BUFFER_DIGEST_THRESHOLD` 或命令行参数覆盖。
-   - 若 scratch 数量 < 阈值：继续输出报告。
-   - 若 scratch 数量 >= 阈值：输出「达到自动消化阈值，将自动进入 /digest」，并立即调用 `/digest` 流程。
-5. 输出编译报告：
-   - 生成了多少个 Buffer 文件
-   - 各类型分布
+   - 若 scratch 数量 < 阈值：继续下一轮。
+   - 若 scratch 数量 >= 阈值：输出「达到自动消化阈值，将自动进入 /digest」，
+     并立即调用 `/digest` 流程。
+6. 全部循环结束后输出总报告：
+   - 原始文档数、编译单元数、批次数、Buffer 类型分布
    - 是否触发自动消化
-   - 无法归类的片段数量
-   - 是否有明显冲突或高价值主题提示
-6. 将原始文档移动到 03-Archive/。
+   - 无法归类的片段数量与异常
+7. 将原始文档移动到 `03-Archive/`。
 ```
+
+**实现脚本**：`python scripts/compile_loop.py [--max-chars 30000] [--dry-run]`
 
 **约束**：
 - `/compile` **只**生成 Buffer，不创建/修改 `01-Cards/` 或 `02-Profile/`。
