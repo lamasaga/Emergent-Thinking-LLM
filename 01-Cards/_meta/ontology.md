@@ -3,7 +3,7 @@ id: "ontology"
 title: "知识库元结构"
 type: "meta"
 created: "2026-07-07"
-updated: "2026-07-07"
+updated: "2026-07-13"
 status: "active"
 ---
 
@@ -87,6 +87,18 @@ status: "active"
     ├── 双系统模型.md       (type: model)
     └── 认知负荷有限原则.md (type: principle)
 ```
+
+## Buffer 目录与元数据
+
+- `05-Buffer/` 存放由 `/compile` 生成的原子化中间产物，是 raw 文档与卡片之间的缓冲层。
+- 子目录直接使用本文件声明的 10 个 type 名称：`domain/`、`notion/`、`principle/`、`phenomenon/`、`entity/`、`group/`、`model/`、`method/`、`conflict/`、`note/`。
+- 文件命名：`YYYY-MM-DD-HHMMSS-关键词.md`，保证按时间排序。
+- Buffer 文件 frontmatter 不写 `id`，不写 `relations`；必须包含 `status` 字段：
+  - `scratch`：尚未被消费。
+  - `digested`：已被 `/digest` 处理。
+  - `constructed`：已被 `/construct` 整合进结构。
+- Buffer 正文内容严格单次写入；`status` 与 `updated` 可由 `/digest` 或 `/construct` 更新。
+- Buffer 文件不使用 `[[ ]]` 链接，避免幽灵链接治理问题。
 
 ## 允许的 relation 类型
 
