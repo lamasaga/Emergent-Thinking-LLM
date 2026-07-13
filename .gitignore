@@ -1,2 +1,12 @@
 # Local design docs and specs - not synced to GitHub
 docs/
+
+# Worktrees
+.worktrees/
+
+# Python / pytest
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+

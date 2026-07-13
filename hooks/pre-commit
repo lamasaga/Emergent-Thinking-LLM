@@ -1,8 +1,11 @@
 #!/bin/sh
-# pre-commit hook：提交前校验卡片一致性
+# pre-commit hook：提交前校验卡片与 Buffer 一致性
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-SCRIPT="$PROJECT_ROOT/scripts/validate_cards.py"
+
+# 要运行的校验脚本，按顺序执行
+VALIDATE_CARDS="$PROJECT_ROOT/scripts/validate_cards.py"
+VALIDATE_BUFFER="$PROJECT_ROOT/scripts/validate_buffer.py"
 
 try_python() {
     interpreter="$1"
@@ -13,23 +16,49 @@ try_python() {
     if ! "$interpreter" -c "import sys; sys.exit(0)" >/dev/null 2>&1; then
         return 1
     fi
-    "$interpreter" "$SCRIPT"
-    return $?
+    return 0
 }
 
-run_python() {
-    try_python python3 || try_python python || try_python py
-    if [ $? -eq 0 ]; then
+find_python() {
+    # 优先尝试常见命令
+    for cmd in python3 python py; do
+        if try_python "$cmd"; then
+            echo "$cmd"
+            return 0
+        fi
+    done
+    # Windows 常见安装路径兜底
+    WIN_PYTHON="/c/Users/MECHREVO/AppData/Local/Programs/Python/Python313/python.exe"
+    if [ -x "$WIN_PYTHON" ]; then
+        echo "$WIN_PYTHON"
         return 0
     fi
-    # Windows 常见安装路径兜底
-    if [ -x "/c/Users/MECHREVO/AppData/Local/Programs/Python/Python313/python.exe" ]; then
-        "/c/Users/MECHREVO/AppData/Local/Programs/Python/Python313/python.exe" "$SCRIPT"
-        return $?
-    fi
-    echo "错误：未找到可用的 Python 解释器，无法运行卡片校验脚本。"
-    echo "请修改 hooks/pre-commit 中的 Python 路径，或确保 python3/python/py 在 PATH 中。"
     return 1
 }
 
-run_python
+PYTHONInterpreter=$(find_python)
+if [ -z "$PYTHONInterpreter" ]; then
+    echo "错误：未找到可用的 Python 解释器，无法运行校验脚本。"
+    echo "请修改 hooks/pre-commit 中的 Python 路径，或确保 python3/python/py 在 PATH 中。"
+    exit 1
+fi
+
+# 运行卡片校验
+"$PYTHONInterpreter" "$VALIDATE_CARDS"
+CARDS_STATUS=$?
+if [ $CARDS_STATUS -ne 0 ]; then
+    echo ""
+    echo "卡片校验失败，提交已阻止。"
+    exit $CARDS_STATUS
+fi
+
+# 运行 Buffer 校验
+"$PYTHONInterpreter" "$VALIDATE_BUFFER"
+BUFFER_STATUS=$?
+if [ $BUFFER_STATUS -ne 0 ]; then
+    echo ""
+    echo "Buffer 校验失败，提交已阻止。"
+    exit $BUFFER_STATUS
+fi
+
+exit 0
