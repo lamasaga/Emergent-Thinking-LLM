@@ -1,12 +1,24 @@
 """编译单元的批次组织、LLM 调用与 Buffer 写入。"""
 
+import logging
 import re
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 from compile_lib import BUFFER_DIR
+
+
+logger = logging.getLogger(__name__)
+
+
+VALID_BUFFER_TYPES = {
+    "domain", "notion", "principle", "phenomenon", "entity",
+    "group", "model", "method", "conflict", "note",
+}
 
 
 COMPILE_SYSTEM_PROMPT = """你是一位个人知识库的编译助手。你的任务是将输入的原始文本进行原子化拆解，生成 Buffer 中间产物。
@@ -80,6 +92,7 @@ def format_batch_prompt(units: list[dict]) -> str:
 def parse_llm_buffers(raw_output: str, default_source: str) -> list[dict]:
     """
     解析 LLM 输出中的 Buffer 块。
+    支持 ```yaml ... ``` 代码围栏。
     每个 Buffer 块格式：
     ---
     title: xxx
@@ -89,24 +102,78 @@ def parse_llm_buffers(raw_output: str, default_source: str) -> list[dict]:
     # xxx
     ...
     """
-    pattern = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*?)(?=\n---\s*\n|$)", re.DOTALL | re.MULTILINE)
+    # 去除可能的 markdown 代码围栏
+    text = raw_output.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n", "", text)
+        text = re.sub(r"\n```\s*$", "", text)
+        text = text.strip()
+
+    if not text:
+        raise ValueError("LLM 输出为空")
+
     buffers = []
-    for fm, body in pattern.findall(raw_output):
-        title = _extract_fm_field(fm, "title") or "未命名碎片"
-        btype = _extract_fm_field(fm, "type") or "note"
-        source = _extract_fm_field(fm, "source") or default_source
+    pos = 0
+    while True:
+        # 查找下一个 frontmatter 起点
+        start = text.find("---", pos)
+        if start == -1:
+            break
+        # 查找 frontmatter 终点
+        end = text.find("---", start + 3)
+        if end == -1:
+            break
+        fm_text = text[start + 3:end].strip()
+
+        try:
+            fm = yaml.safe_load(fm_text)
+            if not isinstance(fm, dict):
+                raise ValueError("frontmatter 不是字典")
+        except yaml.YAMLError as e:
+            logger.warning("解析 frontmatter 失败：%s", e)
+            pos = end + 3
+            continue
+
+        # 正文：从 end+3 到下一个真实 frontmatter 起点
+        # 允许正文中包含 ---，只有紧随合法 frontmatter 的 --- 才视为下一块起点
+        candidate = text.find("---", end + 3)
+        next_start = -1
+        while candidate != -1:
+            fm_end_candidate = text.find("---", candidate + 3)
+            if fm_end_candidate == -1:
+                break
+            candidate_fm_text = text[candidate + 3:fm_end_candidate].strip()
+            try:
+                candidate_fm = yaml.safe_load(candidate_fm_text)
+                if isinstance(candidate_fm, dict) and "title" in candidate_fm:
+                    next_start = candidate
+                    break
+            except yaml.YAMLError:
+                pass
+            candidate = text.find("---", candidate + 3)
+
+        body = text[end + 3:next_start if next_start != -1 else len(text)].strip()
+
+        btype = fm.get("type", "note")
+        if btype not in VALID_BUFFER_TYPES:
+            logger.warning("非法 Buffer type '%s'，回退到 note", btype)
+            btype = "note"
+
         buffers.append({
-            "title": title,
+            "title": str(fm.get("title", "未命名碎片")),
             "type": btype,
-            "source": source,
-            "body": body.strip(),
+            "source": str(fm.get("source", default_source)),
+            "body": body,
         })
+
+        pos = end + 3
+        if next_start == -1:
+            break
+
+    if not buffers:
+        raise ValueError("未从 LLM 输出中解析到任何 Buffer 块")
+
     return buffers
-
-
-def _extract_fm_field(fm_text: str, field: str) -> str | None:
-    m = re.search(rf"^{field}:\s*(.+?)$", fm_text, re.MULTILINE)
-    return m.group(1).strip().strip('"').strip("'") if m else None
 
 
 def _sanitize_filename(title: str) -> str:
@@ -116,27 +183,34 @@ def _sanitize_filename(title: str) -> str:
     return s[:50] or "untitled"
 
 
-def write_buffer(buffer: dict, subtype: str) -> Path:
+def write_buffer(buffer: dict, subtype: str, now: datetime | None = None) -> Path:
     """写入单个 Buffer 文件。"""
-    now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    if now is None:
+        now = datetime.now()
+
+    btype = buffer.get("type", "note")
+    if btype not in VALID_BUFFER_TYPES:
+        logging.warning("非法 Buffer type '%s'，回退到 note", btype)
+        btype = "note"
+    if subtype not in VALID_BUFFER_TYPES:
+        subtype = "note"
+
     safe_title = _sanitize_filename(buffer["title"])
-    filename = f"{now}-{safe_title}.md"
+    filename = now.strftime(f"%Y-%m-%d-%H%M%S-%f-{safe_title}.md")
     target_dir = BUFFER_DIR / subtype
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / filename
 
-    frontmatter = f"""---
-title: "{buffer['title']}"
-type: "{buffer['type']}"
-created: "{datetime.now().strftime('%Y-%m-%d')}"
-updated: "{datetime.now().strftime('%Y-%m-%d')}"
-source: "{buffer['source']}"
-status: scratch
----
-
-{buffer['body']}
-"""
-    target.write_text(frontmatter, encoding="utf-8")
+    frontmatter = {
+        "title": buffer["title"],
+        "type": btype,
+        "created": now.strftime("%Y-%m-%d"),
+        "updated": now.strftime("%Y-%m-%d"),
+        "source": buffer["source"],
+        "status": "scratch",
+    }
+    content = "---\n" + yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False) + "---\n\n" + buffer["body"]
+    target.write_text(content, encoding="utf-8")
     return target
 
 

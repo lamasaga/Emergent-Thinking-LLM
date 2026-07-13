@@ -3,6 +3,7 @@ from pathlib import Path
 
 import fitz
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
@@ -16,7 +17,7 @@ from compile_lib.chunker import (
 )
 from compile_lib.ingest import scan_inbox, classify_file, UnsupportedDocumentError
 from compile_lib.pdf_extractor import extract_pdf_toc_chunks, PdfExtractionError, _split_by_page_ranges
-from compile_lib.batch_runner import build_batches, format_batch_prompt
+from compile_lib.batch_runner import build_batches, format_batch_prompt, parse_llm_buffers, write_buffer
 
 
 def _make_pdf(path: Path, pages: list[str], toc: list | None = None, font_size: float = 12.0):
@@ -466,3 +467,99 @@ def test_format_batch_prompt():
     assert "a.md" in prompt
     assert "内容" in prompt
     assert "原子化拆解" in prompt
+
+
+
+def test_parse_llm_buffers_valid():
+    raw = """
+---
+title: 认知脚手架
+type: notion
+source: book.pdf / 第一章 / p.1-10
+---
+# 认知脚手架
+脚手架是临时支持结构。
+
+---
+title: 自我调节学习
+type: notion
+---
+# 自我调节学习
+学习者主动监控自己的理解。
+"""
+    buffers = parse_llm_buffers(raw, "default")
+    assert len(buffers) == 2
+    assert buffers[0]["title"] == "认知脚手架"
+    assert buffers[0]["type"] == "notion"
+    assert buffers[1]["title"] == "自我调节学习"
+
+
+def test_parse_llm_buffers_with_code_fence():
+    raw = """```yaml
+---
+title: 测试
+type: note
+---
+正文。
+```"""
+    buffers = parse_llm_buffers(raw, "default")
+    assert len(buffers) == 1
+    assert buffers[0]["title"] == "测试"
+
+
+def test_parse_llm_buffers_invalid_type_fallback():
+    raw = """
+---
+title: 非法
+type: unknown_type
+---
+正文。
+"""
+    buffers = parse_llm_buffers(raw, "default")
+    assert buffers[0]["type"] == "note"
+
+
+def test_parse_llm_buffers_body_with_separator():
+    raw = """
+---
+title: 分隔线
+type: note
+---
+正文里有 --- 分隔线。
+"""
+    buffers = parse_llm_buffers(raw, "default")
+    assert "---" in buffers[0]["body"]
+
+
+def test_write_buffer_format(tmp_path, monkeypatch):
+    monkeypatch.setattr("compile_lib.batch_runner.BUFFER_DIR", tmp_path)
+    buffer = {
+        "title": '标题"引号',
+        "type": "notion",
+        "source": '来源"引号',
+        "body": "正文",
+    }
+    path = write_buffer(buffer, "notion")
+    assert path.exists()
+    content = path.read_text(encoding="utf-8")
+    # 验证 frontmatter 可被 YAML 正确解析（不会因引号产生非法 YAML）
+    _, fm_text, _ = content.split("---", 2)
+    parsed = yaml.safe_load(fm_text)
+    assert parsed["title"] == '标题"引号'
+    assert parsed["source"] == '来源"引号'
+    assert "status: scratch" in content
+    assert "正文" in content
+
+
+def test_write_buffer_invalid_type(tmp_path, monkeypatch):
+    monkeypatch.setattr("compile_lib.batch_runner.BUFFER_DIR", tmp_path)
+    buffer = {
+        "title": "测试",
+        "type": "invalid",
+        "source": "src",
+        "body": "body",
+    }
+    path = write_buffer(buffer, "invalid")
+    assert path.parent.name == "note"
+    content = path.read_text(encoding="utf-8")
+    assert "type: note" in content
