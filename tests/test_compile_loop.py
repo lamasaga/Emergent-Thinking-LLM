@@ -1,9 +1,12 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from compile_lib import count_chars, ensure_buffer_dirs
+from compile_lib.ingest import scan_inbox, classify_file, UnsupportedDocumentError
 
 
 def test_count_chars_chinese():
@@ -44,3 +47,39 @@ def test_ensure_buffer_dirs(tmp_path):
         "group", "model", "method", "conflict", "note",
     ):
         assert (tmp_path / subtype).is_dir()
+
+
+def test_classify_file_text(tmp_path):
+    md = tmp_path / "article.md"
+    md.write_text("# Hello\n", encoding="utf-8")
+    assert classify_file(md) == "text"
+
+    txt = tmp_path / "note.txt"
+    txt.write_text("note", encoding="utf-8")
+    assert classify_file(txt) == "text"
+
+
+def test_classify_file_pdf(tmp_path):
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    assert classify_file(pdf) == "pdf"
+
+
+def test_classify_file_unsupported(tmp_path):
+    doc = tmp_path / "image.png"
+    doc.write_bytes(b"\x89PNG")
+    with pytest.raises(UnsupportedDocumentError):
+        classify_file(doc)
+
+
+def test_scan_inbox(tmp_path):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "a.md").write_text("# Article A", encoding="utf-8")
+    (inbox / "b.txt").write_text("Note B", encoding="utf-8")
+    (inbox / "c.pdf").write_bytes(b"%PDF-1.4 fake")
+    (inbox / ".gitkeep").write_text("", encoding="utf-8")
+
+    docs = scan_inbox(inbox)
+    names = {d["path"].name for d in docs}
+    assert names == {"a.md", "b.txt", "c.pdf"}
