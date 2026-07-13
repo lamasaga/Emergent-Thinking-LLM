@@ -16,6 +16,7 @@ from compile_lib.chunker import (
 )
 from compile_lib.ingest import scan_inbox, classify_file, UnsupportedDocumentError
 from compile_lib.pdf_extractor import extract_pdf_toc_chunks, PdfExtractionError, _split_by_page_ranges
+from compile_lib.batch_runner import build_batches, format_batch_prompt
 
 
 def _make_pdf(path: Path, pages: list[str], toc: list | None = None, font_size: float = 12.0):
@@ -425,3 +426,43 @@ def test_compile_unit_schema(tmp_path):
     }
     assert set(unit.keys()) == expected_fields
     assert unit["unit_id"] == "schema_test-001"
+
+
+def test_build_batches_simple():
+    units = [
+        {"unit_id": "u1", "char_count": 10000, "text": "a" * 10000},
+        {"unit_id": "u2", "char_count": 15000, "text": "b" * 15000},
+        {"unit_id": "u3", "char_count": 20000, "text": "c" * 20000},
+    ]
+    batches = build_batches(units, max_chars=30000)
+    assert len(batches) == 2
+    assert len(batches[0]) == 2
+    assert len(batches[1]) == 1
+
+
+def test_build_batches_oversized_unit():
+    units = [
+        {"unit_id": "u1", "char_count": 50000, "text": "x" * 50000},
+    ]
+    batches = build_batches(units, max_chars=30000)
+    assert len(batches) == 1
+    assert batches[0][0]["unit_id"] == "u1"
+
+
+def test_format_batch_prompt():
+    units = [
+        {
+            "unit_id": "u1",
+            "source_path": Path("00-Inbox/a.md"),
+            "doc_type": "text",
+            "title": "a.md",
+            "section": "",
+            "page_range": "",
+            "char_count": 10,
+            "text": "内容",
+        }
+    ]
+    prompt = format_batch_prompt(units)
+    assert "a.md" in prompt
+    assert "内容" in prompt
+    assert "原子化拆解" in prompt
