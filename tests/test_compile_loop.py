@@ -72,14 +72,46 @@ def test_classify_file_unsupported(tmp_path):
         classify_file(doc)
 
 
+def test_classify_file_extensionless_text(tmp_path):
+    doc = tmp_path / "extensionless_text"
+    doc.write_text("plain utf-8 text", encoding="utf-8")
+    assert classify_file(doc) == "text"
+
+
+def test_classify_file_extensionless_binary(tmp_path):
+    doc = tmp_path / "extensionless_binary"
+    doc.write_bytes(b"\x89PNG\r\n\x1a\n")
+    with pytest.raises(UnsupportedDocumentError):
+        classify_file(doc)
+
+
+def test_classify_file_case_insensitive(tmp_path):
+    md = tmp_path / "article.MD"
+    md.write_text("# Hello", encoding="utf-8")
+    assert classify_file(md) == "text"
+
+    txt = tmp_path / "note.TXT"
+    txt.write_text("note", encoding="utf-8")
+    assert classify_file(txt) == "text"
+
+    pdf = tmp_path / "book.PDF"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    assert classify_file(pdf) == "pdf"
+
+
 def test_scan_inbox(tmp_path):
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     (inbox / "a.md").write_text("# Article A", encoding="utf-8")
     (inbox / "b.txt").write_text("Note B", encoding="utf-8")
     (inbox / "c.pdf").write_bytes(b"%PDF-1.4 fake")
+    (inbox / "d.png").write_bytes(b"\x89PNG")
     (inbox / ".gitkeep").write_text("", encoding="utf-8")
 
     docs = scan_inbox(inbox)
     names = {d["path"].name for d in docs}
     assert names == {"a.md", "b.txt", "c.pdf"}
+    assert "d.png" not in names
+
+    # inbox 不存在时返回空列表
+    assert scan_inbox(tmp_path / "nonexistent") == []
