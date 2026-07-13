@@ -563,3 +563,43 @@ def test_write_buffer_invalid_type(tmp_path, monkeypatch):
     assert path.parent.name == "note"
     content = path.read_text(encoding="utf-8")
     assert "type: note" in content
+
+
+def test_compile_main_empty_inbox(tmp_path, monkeypatch):
+    inbox = tmp_path / "00-Inbox"
+    inbox.mkdir()
+    buffer_dir = tmp_path / "05-Buffer"
+    buffer_dir.mkdir()
+    archive_dir = tmp_path / "03-Archive"
+    archive_dir.mkdir()
+
+    import compile_loop
+    monkeypatch.setattr("compile_loop.INBOX_DIR", inbox)
+    monkeypatch.setattr("compile_lib.BUFFER_DIR", buffer_dir)
+    monkeypatch.setattr("compile_loop.ARCHIVE_DIR", archive_dir)
+
+    result = compile_loop.main()
+    assert result == 0
+
+
+def test_compile_main_dry_run_with_text(tmp_path, monkeypatch, capsys):
+    inbox = tmp_path / "00-Inbox"
+    inbox.mkdir()
+    buffer_dir = tmp_path / "05-Buffer"
+    buffer_dir.mkdir()
+    archive_dir = tmp_path / "03-Archive"
+    archive_dir.mkdir()
+
+    (inbox / "article.md").write_text("# Title\n\n正文。" * 100, encoding="utf-8")
+
+    import compile_loop
+    monkeypatch.setattr("compile_loop.INBOX_DIR", inbox)
+    monkeypatch.setattr("compile_lib.BUFFER_DIR", buffer_dir)
+    monkeypatch.setattr("compile_loop.ARCHIVE_DIR", archive_dir)
+
+    result = compile_loop.main(["--dry-run"])
+    assert result == 0
+
+    captured = capsys.readouterr()
+    assert "批次" in captured.out
+    assert "提示词" in captured.out or "prompt" in captured.out.lower()
