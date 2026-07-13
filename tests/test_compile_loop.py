@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from compile_lib import count_chars, ensure_buffer_dirs
 from compile_lib.ingest import scan_inbox, classify_file, UnsupportedDocumentError
+from compile_lib.pdf_extractor import extract_pdf_toc_chunks, PdfExtractionError
 
 
 def test_count_chars_chinese():
@@ -115,3 +116,16 @@ def test_scan_inbox(tmp_path):
 
     # inbox 不存在时返回空列表
     assert scan_inbox(tmp_path / "nonexistent") == []
+
+
+def test_extract_pdf_toc_chunks_with_sample_pdf(tmp_path):
+    # 需要提前在 tests/fixtures/sample.pdf 放置真实 PDF
+    fixture = Path(__file__).resolve().parent / "fixtures" / "sample.pdf"
+    if not fixture.exists():
+        pytest.skip("缺少 tests/fixtures/sample.pdf")
+
+    chunks = extract_pdf_toc_chunks(fixture, max_chars=30000)
+    assert isinstance(chunks, list)
+    assert all(c["char_count"] <= 30000 for c in chunks)
+    assert all("page_range" in c for c in chunks)
+    assert all("text" in c and c["text"] for c in chunks)
