@@ -26,7 +26,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 ROOT = Path(__file__).resolve().parent.parent
 BUFFER_DIR = ROOT / "05-Buffer"
-DEFAULT_THRESHOLD = 10
+DEFAULT_THRESHOLD = 50
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 STATUS_PATTERN = re.compile(r"^status:\s*['\"]?(scratch)['\"]?$", re.MULTILINE)
 

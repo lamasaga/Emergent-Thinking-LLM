@@ -48,7 +48,7 @@ VALID_STATUSES = {"scratch", "digested", "constructed"}
 FILENAME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{6}-.+\.md$")
 LINK_PATTERN = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-SCRATCH_THRESHOLD = 10
+SCRATCH_THRESHOLD = 50
 
 
 def extract_frontmatter(content: str):

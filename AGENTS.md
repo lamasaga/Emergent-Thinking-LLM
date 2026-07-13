@@ -88,7 +88,7 @@ Step 6: 更新领域卡片和 ontology.md（如有新发现）
    - frontmatter 必须包含 title、type、created、updated、source、status: scratch。
    - 不写 id，不写 relations，不使用 [[ ]] 链接。
 4. 运行 `scripts/check_digest_trigger.py` 检查 scratch Buffer 数量：
-   - 默认阈值为 10，可通过环境变量 `BUFFER_DIGEST_THRESHOLD` 或命令行参数覆盖。
+   - 默认阈值为 50，可通过环境变量 `BUFFER_DIGEST_THRESHOLD` 或命令行参数覆盖。
    - 若 scratch 数量 < 阈值：继续输出报告。
    - 若 scratch 数量 >= 阈值：输出「达到自动消化阈值，将自动进入 /digest」，并立即调用 `/digest` 流程。
 5. 输出编译报告：
