@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from compile_lib import count_chars, ensure_buffer_dirs
+from compile_lib.chunker import _split_text_by_paragraphs, build_compile_units
 from compile_lib.ingest import scan_inbox, classify_file, UnsupportedDocumentError
 from compile_lib.pdf_extractor import extract_pdf_toc_chunks, PdfExtractionError, _split_by_page_ranges
 
@@ -285,8 +286,6 @@ def test_split_by_page_ranges_empty_range(tmp_path):
 
     assert chunks == []
 
-from compile_lib.chunker import build_compile_units
-
 
 def test_build_compile_units_text(tmp_path):
     inbox = tmp_path / "inbox"
@@ -310,3 +309,81 @@ def test_build_compile_units_text_split(tmp_path):
     units = build_compile_units([{"path": article, "doc_type": "text"}], max_chars=30000)
     assert len(units) > 1
     assert all(u["char_count"] <= 30000 for u in units)
+
+
+def test_split_text_by_paragraphs_empty():
+    assert _split_text_by_paragraphs("", max_chars=10) == []
+
+
+def test_split_text_by_paragraphs_single_paragraph():
+    text = "这是一个简短的段落。"
+    chunks = _split_text_by_paragraphs(text, max_chars=100)
+    assert len(chunks) == 1
+    assert chunks[0] == text
+
+
+def test_split_text_by_paragraphs_multiple_paragraphs():
+    para1 = "第一段。" * 5
+    para2 = "第二段。" * 5
+    para3 = "第三段。" * 5
+    text = "\n\n".join([para1, para2, para3])
+    chunks = _split_text_by_paragraphs(text, max_chars=30)
+    assert len(chunks) == 2
+    assert para1 in chunks[0]
+    assert para2 in chunks[0]
+    assert para3 in chunks[1]
+
+
+def test_split_text_by_paragraphs_oversized_paragraph():
+    para = "句子一。" * 20
+    chunks = _split_text_by_paragraphs(para, max_chars=30)
+    assert len(chunks) >= 2
+    assert all(count_chars(c) <= 30 for c in chunks)
+
+
+def test_split_text_by_paragraphs_oversized_sentence():
+    sentence = "密" * 50
+    text = sentence + "。"
+    chunks = _split_text_by_paragraphs(text, max_chars=20)
+    assert len(chunks) >= 2
+    assert all(count_chars(c) <= 20 for c in chunks)
+
+
+def test_build_compile_units_pdf(tmp_path):
+    pdf = tmp_path / "book.pdf"
+    _make_pdf(pdf, ["第一章内容"], toc=[[1, "第一章", 1]])
+
+    units = build_compile_units([{"path": pdf, "doc_type": "pdf"}], max_chars=30000)
+    assert len(units) >= 1
+    assert units[0]["doc_type"] == "pdf"
+    assert units[0]["source_path"] == pdf
+    assert units[0]["title"] == "第一章"
+    assert units[0]["page_range"] == "1-1"
+
+
+def test_build_compile_units_unknown_type(tmp_path):
+    doc = tmp_path / "weird.xyz"
+    doc.write_text("content", encoding="utf-8")
+    with pytest.raises(ValueError, match="未知文档类型"):
+        build_compile_units([{"path": doc, "doc_type": "xyz"}])
+
+
+def test_build_compile_units_max_chars_non_positive(tmp_path):
+    md = tmp_path / "article.md"
+    md.write_text("content", encoding="utf-8")
+    with pytest.raises(ValueError, match="max_chars 必须为正数"):
+        build_compile_units([{"path": md, "doc_type": "text"}], max_chars=0)
+
+
+def test_compile_unit_schema(tmp_path):
+    md = tmp_path / "schema_test.md"
+    md.write_text("# Title\n\n正文内容。", encoding="utf-8")
+    units = build_compile_units([{"path": md, "doc_type": "text"}], max_chars=30000)
+    assert len(units) == 1
+    unit = units[0]
+    expected_fields = {
+        "unit_id", "source_path", "doc_type", "title",
+        "page_range", "section", "char_count", "text", "archivable",
+    }
+    assert set(unit.keys()) == expected_fields
+    assert unit["unit_id"] == "schema_test-001"
