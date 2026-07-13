@@ -12,29 +12,53 @@ from compile_lib.pdf_extractor import extract_pdf_toc_chunks
 SENTENCE_END_RE = re.compile(r"([。.?!？！])")
 
 
-def _flush_current(current: list[str], current_len: int, chunks: list[str]) -> tuple[list[str], int]:
-    """将当前缓冲区 flush 到 chunks，并返回新的缓冲区和长度。"""
+def _flush_current(current: list[str], chunks: list[str]) -> list[str]:
+    """将当前缓冲区 flush 到 chunks，并返回新的缓冲区。"""
     if current:
         chunks.append("\n\n".join(current))
-    return [], 0
+    return []
+
+
+def _tokenize_for_count(text: str) -> list[tuple[str, int]]:
+    """将文本拆分为 (token, cost_numerator) 列表。
+
+    cost_numerator 按 count_chars 的规则以 2 倍精度累计：
+    - 中文字符：2（即等效 1 个字符）
+    - 英文单词：3（即 ceil(1.5) 的 2 倍精度）
+    - 其他字符：0
+    """
+    tokens = []
+    i = 0
+    n = len(text)
+    while i < n:
+        m = WORD_RE.match(text, i)
+        if m:
+            tokens.append((m.group(0), 3))
+            i = m.end()
+        else:
+            ch = text[i]
+            cost = 2 if "\u4e00" <= ch <= "\u9fff" else 0
+            tokens.append((ch, cost))
+            i += 1
+    return tokens
 
 
 def _split_long_sentence(sentence: str, max_chars: int) -> list[str]:
-    """对超长句子按等效字符数强制截断，确保每个子块 ≤ max_chars。"""
+    """对超长句子按等效字符数强制截断，确保每个子块 ≤ max_chars。O(n)。"""
     if count_chars(sentence) <= max_chars:
         return [sentence]
 
     chunks = []
     current = []
-    current_len = 0
+    current_num = 0
 
-    for ch in sentence:
-        current.append(ch)
-        current_len = count_chars("".join(current))
-        if current_len >= max_chars:
+    for token, token_num in _tokenize_for_count(sentence):
+        if current and (current_num + token_num + 1) // 2 > max_chars:
             chunks.append("".join(current))
             current = []
-            current_len = 0
+            current_num = 0
+        current.append(token)
+        current_num += token_num
 
     if current:
         chunks.append("".join(current))
@@ -55,7 +79,8 @@ def _split_text_by_paragraphs(text: str, max_chars: int) -> list[str]:
         para_len = count_chars(para)
         if para_len > max_chars:
             # 拆分超长段落前先 flush 当前缓冲区
-            current, current_len = _flush_current(current, current_len, chunks)
+            current = _flush_current(current, chunks)
+            current_len = 0
 
             # 单段就超过上限，按句子切分
             parts = SENTENCE_END_RE.split(para)
@@ -71,24 +96,28 @@ def _split_text_by_paragraphs(text: str, max_chars: int) -> list[str]:
                 s_len = count_chars(sentence)
                 if s_len > max_chars:
                     # 单句仍超限，强制截断
-                    current, current_len = _flush_current(current, current_len, chunks)
+                    current = _flush_current(current, chunks)
+                    current_len = 0
                     for sub in _split_long_sentence(sentence, max_chars):
                         sub_len = count_chars(sub)
                         if current_len + sub_len > max_chars and current:
-                            current, current_len = _flush_current(current, current_len, chunks)
+                            current = _flush_current(current, chunks)
+                            current_len = 0
                         current.append(sub)
                         current_len += sub_len
                     continue
 
                 if current_len + s_len > max_chars and current:
-                    current, current_len = _flush_current(current, current_len, chunks)
+                    current = _flush_current(current, chunks)
+                    current_len = 0
 
                 current.append(sentence)
                 current_len += s_len
             continue
 
         if current_len + para_len > max_chars and current:
-            current, current_len = _flush_current(current, current_len, chunks)
+            current = _flush_current(current, chunks)
+            current_len = 0
 
         current.append(para)
         current_len += para_len
