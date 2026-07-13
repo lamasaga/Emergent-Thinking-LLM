@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+import fitz
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -8,6 +9,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from compile_lib import count_chars, ensure_buffer_dirs
 from compile_lib.ingest import scan_inbox, classify_file, UnsupportedDocumentError
 from compile_lib.pdf_extractor import extract_pdf_toc_chunks, PdfExtractionError
+
+
+def _make_pdf(path: Path, pages: list[str], toc: list | None = None):
+    doc = fitz.open()
+    for text in pages:
+        page = doc.new_page()
+        # 使用支持中文的 CJK 字体，确保文本可正确提取
+        page.insert_text((72, 72), text, fontname="china-ss")
+    if toc:
+        doc.set_toc(toc)
+    doc.save(path)
+    doc.close()
 
 
 def test_count_chars_chinese():
@@ -118,14 +131,69 @@ def test_scan_inbox(tmp_path):
     assert scan_inbox(tmp_path / "nonexistent") == []
 
 
-def test_extract_pdf_toc_chunks_with_sample_pdf(tmp_path):
-    # 需要提前在 tests/fixtures/sample.pdf 放置真实 PDF
-    fixture = Path(__file__).resolve().parent / "fixtures" / "sample.pdf"
-    if not fixture.exists():
-        pytest.skip("缺少 tests/fixtures/sample.pdf")
+def test_extract_pdf_with_toc_single_chapter(tmp_path):
+    pdf = tmp_path / "single_chapter.pdf"
+    _make_pdf(pdf, ["第一章内容"], toc=[[1, "第一章", 1]])
 
-    chunks = extract_pdf_toc_chunks(fixture, max_chars=30000)
-    assert isinstance(chunks, list)
-    assert all(c["char_count"] <= 30000 for c in chunks)
+    chunks = extract_pdf_toc_chunks(pdf, max_chars=30000)
+    assert len(chunks) == 1
+    assert chunks[0]["title"] == "第一章"
+    assert chunks[0]["page_range"] == "1-1"
+    assert "第一章内容" in chunks[0]["text"]
+    assert chunks[0]["char_count"] > 0
+
+
+def test_extract_pdf_without_toc_fallback(tmp_path):
+    pdf = tmp_path / "no_toc.pdf"
+    _make_pdf(pdf, ["第一页", "第二页", "第三页"])
+
+    chunks = extract_pdf_toc_chunks(pdf, max_chars=30000)
+    assert len(chunks) >= 1
     assert all("page_range" in c for c in chunks)
-    assert all("text" in c and c["text"] for c in chunks)
+    assert all(c["text"] for c in chunks)
+
+
+def test_extract_pdf_oversized_chapter(tmp_path):
+    pdf = tmp_path / "oversized.pdf"
+    # 第一章两页，每页重复大量字符使其超过 max_chars
+    long_text = "第一章 " + "x " * 2000
+    normal_text = "第二章内容"
+    _make_pdf(
+        pdf,
+        [long_text, long_text, normal_text],
+        toc=[[1, "第一章", 1], [1, "第二章", 3]],
+    )
+
+    chunks = extract_pdf_toc_chunks(pdf, max_chars=100)
+    titles = [c["title"] for c in chunks]
+    assert any("第二章" in t and "第一章" not in t for t in titles)
+    assert all(c["char_count"] <= 100 for c in chunks)
+
+
+def test_extract_pdf_empty(tmp_path):
+    pdf = tmp_path / "empty.pdf"
+    # PyMuPDF 无法保存 0 页 PDF，使用一页无文本的空白页测试空内容返回空列表
+    _make_pdf(pdf, [""])
+
+    chunks = extract_pdf_toc_chunks(pdf, max_chars=30000)
+    assert chunks == []
+
+
+def test_extract_pdf_invalid_path(tmp_path):
+    missing = tmp_path / "missing.pdf"
+    with pytest.raises(PdfExtractionError):
+        extract_pdf_toc_chunks(missing, max_chars=30000)
+
+
+def test_extract_pdf_all_chunks_within_limit(tmp_path):
+    pdf = tmp_path / "within_limit.pdf"
+    _make_pdf(
+        pdf,
+        ["alpha beta", "charlie delta", "echo foxtrot"],
+        toc=[[1, "第一部分", 1], [1, "第二部分", 3]],
+    )
+
+    chunks = extract_pdf_toc_chunks(pdf, max_chars=50)
+    assert isinstance(chunks, list)
+    assert all(c["char_count"] <= 50 for c in chunks)
+    assert all(c["text"] for c in chunks)
