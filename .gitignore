@@ -1,2 +1,5 @@
 # Local design docs and specs - not synced to GitHub
 docs/
+
+# Worktrees
+.worktrees/
