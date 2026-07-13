@@ -1,4 +1,4 @@
-# AGENTS.md — AI 操作手册（v3.2）
+# AGENTS.md — AI 操作手册（v3.3）
 
 > **核心原则**：AI 不是来"分解文章"的，AI 是来"建模一个人的思想"的。
 >
@@ -87,12 +87,17 @@ Step 6: 更新领域卡片和 ontology.md（如有新发现）
 3. 将每个碎片写入 05-Buffer/<type>/YYYY-MM-DD-HHMMSS-关键词.md：
    - frontmatter 必须包含 title、type、created、updated、source、status: scratch。
    - 不写 id，不写 relations，不使用 [[ ]] 链接。
-4. 输出编译报告：
+4. 运行 `scripts/check_digest_trigger.py` 检查 scratch Buffer 数量：
+   - 默认阈值为 10，可通过环境变量 `BUFFER_DIGEST_THRESHOLD` 或命令行参数覆盖。
+   - 若 scratch 数量 < 阈值：继续输出报告。
+   - 若 scratch 数量 >= 阈值：输出「达到自动消化阈值，将自动进入 /digest」，并立即调用 `/digest` 流程。
+5. 输出编译报告：
    - 生成了多少个 Buffer 文件
    - 各类型分布
+   - 是否触发自动消化
    - 无法归类的片段数量
    - 是否有明显冲突或高价值主题提示
-5. 将原始文档移动到 03-Archive/。
+6. 将原始文档移动到 03-Archive/。
 ```
 
 **约束**：
@@ -440,14 +445,23 @@ git config core.hooksPath hooks
 
 提交前自动运行，检查：
 
-- frontmatter 必填字段完整性（`id`, `title`, `type`, `created`, `updated`, `status`）
-- `id` 唯一性
-- `type` 有效性
-- 正文与 `relations` 中的链接是否指向真实存在的卡片（**幽灵链接检测**）
-- `relations` 数量是否超过建议上限 6
-- `sources` 列表项数量是否超过上限 6
-- 正文 `## 实例` 部分引用数量是否超过上限 6
-- 是否存在未被任何领域卡片引用的 **orphan 实例卡片**
+- `01-Cards/` 卡片：
+  - frontmatter 必填字段完整性（`id`, `title`, `type`, `created`, `updated`, `status`）
+  - `id` 唯一性
+  - `type` 有效性
+  - 正文与 `relations` 中的链接是否指向真实存在的卡片（**幽灵链接检测**）
+  - `relations` 数量是否超过建议上限 6
+  - `sources` 列表项数量是否超过上限 6
+  - 正文 `## 实例` 部分引用数量是否超过上限 6
+  - 是否存在未被任何领域卡片引用的 **orphan 实例卡片**
+- `05-Buffer/` 中间产物：
+  - frontmatter 必填字段（`title`, `type`, `created`, `updated`, `status`）
+  - `status` 取值有效性
+  - `type` 与所在子目录名称一致
+  - 文件名符合 `YYYY-MM-DD-HHMMSS-关键词.md` 格式
+  - 正文不含 `[[ ]]` 链接
+  - frontmatter 不含 `id` 或 `relations`
+  - `scratch` 文件数量是否超过建议阈值
 
 校验发现错误时阻止提交；发现警告时允许提交，但会提示用户。
 
@@ -455,7 +469,7 @@ git config core.hooksPath hooks
 
 | 指令 | hooks 承担的确定性工作 | LLM 承担的语义工作 |
 |---|---|---|
-| `/compile` | 输入文件存在性检查、Buffer 命名规范校验、原始文档归档移动 | raw 文本的原子化拆解、暂定类型判断 |
+| `/compile` | 输入文件存在性检查、Buffer 命名规范校验、scratch 数量阈值检查、原始文档归档移动 | raw 文本的原子化拆解、暂定类型判断、决定是否自动触发 /digest |
 | `/construct` | 目录创建、frontmatter 模板校验、id 唯一性检查、结构信号扫描、变更清单格式化 | 主题识别、领域设计、整体重组方案、Profile 更新 |
 | `/digest` | frontmatter 补全、updated 字段更新、实例/引用上限检查 | 概念匹配、冲突检测、新建/丰富判断、Profile 变更报告 |
 | `/analyze` | Context Package 格式校验、输出文件命名、引用列表提取 | 推理、论证、风格化表达 |
@@ -471,4 +485,4 @@ git config core.hooksPath hooks
 
 ---
 
-> *本手册随系统演化而更新。版本：v3.2*
+> *本手册随系统演化而更新。版本：v3.3*
