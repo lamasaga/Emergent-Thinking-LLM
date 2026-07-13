@@ -258,3 +258,29 @@ def test_split_by_page_ranges_with_bounds(tmp_path):
         # 文本框换行导致字符被拆散，使用 count 验证内容归属
         assert chunks[0]["text"].count("密") >= 300
         assert chunks[1]["text"].count("集") >= 300
+
+
+def test_split_by_page_ranges_single_page_exceeds(tmp_path):
+    pdf_path = tmp_path / "dense.pdf"
+    # 创建一页就超过 100 字符的 PDF
+    text = "密" * 200
+    _make_pdf(pdf_path, [text], font_size=6.0)
+
+    doc = fitz.open(pdf_path)
+    chunks = _split_by_page_ranges(doc, max_chars=100)
+    doc.close()
+
+    assert len(chunks) == 1
+    assert chunks[0]["char_count"] > 100
+    assert "1-1" in chunks[0]["page_range"]
+
+
+def test_split_by_page_ranges_empty_range(tmp_path):
+    pdf_path = tmp_path / "empty_range.pdf"
+    _make_pdf(pdf_path, ["page one"])
+
+    doc = fitz.open(pdf_path)
+    chunks = _split_by_page_ranges(doc, max_chars=500, start=1, end=1)
+    doc.close()
+
+    assert chunks == []

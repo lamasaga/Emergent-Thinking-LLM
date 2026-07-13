@@ -15,11 +15,11 @@ class PdfExtractionError(RuntimeError):
     """PDF 提取失败。"""
 
 
-def _estimate_chars_per_page(doc: fitz.Document) -> float:
-    """采样前 5 页估算平均每页等效中文字符数。"""
+def _estimate_chars_per_page(doc: fitz.Document, start: int = 0) -> float:
+    """从 start 开始采样前 5 页估算平均每页等效中文字符数。"""
     samples = []
     try:
-        for page in doc[:5]:
+        for page in doc[start : start + 5]:
             try:
                 text = page.get_text()
             except Exception as e:
@@ -39,18 +39,24 @@ def _split_by_page_ranges(
     start: int = 0,
     end: int | None = None,
 ) -> list[dict]:
-    """按页码范围切分，尽量让每段等效中文字符数 ≤ max_chars。
+    """按页码范围切分，尽量让每段字数 ≤ max_chars。
 
-    切分策略以估算的每页字符数为起点，按页码窗口组装文本后校验实际字符数。
-    若窗口超限且窗口仍大于单页，则缩小窗口重新切分；若单页本身已超过
-    max_chars，则接受该 chunk 作为下限保证。
+    Args:
+        doc: fitz.Document 对象。
+        max_chars: 每段最大等效中文字符数。
+        start: 起始页索引（包含），0-based。
+        end: 结束页索引（排他），None 表示到文档末尾。
+
+    Returns:
+        编译单元列表，每个元素包含 title、page_range、text、char_count。
+        当单页文本本身就超过 max_chars 时，该页会作为一个超限 chunk 返回（这是合理下限）。
     """
     if end is None:
         end = len(doc)
     end = min(end, len(doc))
     start = max(0, start)
 
-    chars_per_page = _estimate_chars_per_page(doc)
+    chars_per_page = _estimate_chars_per_page(doc, start)
     pages_per_chunk = max(1, int(max_chars / max(chars_per_page, 1)))
 
     chunks = []
@@ -72,6 +78,7 @@ def _split_by_page_ranges(
             "title": f"页码 {cursor + 1}-{chunk_end}",
             "page_range": f"{cursor + 1}-{chunk_end}",
             "text": text,
+            "char_count": chars,
         })
         pages_in_chunk = chunk_end - cursor
         cursor = chunk_end
