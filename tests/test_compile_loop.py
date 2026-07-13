@@ -284,3 +284,29 @@ def test_split_by_page_ranges_empty_range(tmp_path):
     doc.close()
 
     assert chunks == []
+
+from compile_lib.chunker import build_compile_units
+
+
+def test_build_compile_units_text(tmp_path):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    article = inbox / "article.md"
+    article.write_text("# Title\n\n" + "正文。" * 100, encoding="utf-8")
+
+    units = build_compile_units([{"path": article, "doc_type": "text"}], max_chars=30000)
+    assert len(units) == 1
+    assert units[0]["doc_type"] == "text"
+    assert units[0]["source_path"] == article
+
+
+def test_build_compile_units_text_split(tmp_path):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    article = inbox / "long.md"
+    # 生成 >3 万字的文本
+    article.write_text("# 标题\n\n" + "这是一个很长的段落。" * 4000, encoding="utf-8")
+
+    units = build_compile_units([{"path": article, "doc_type": "text"}], max_chars=30000)
+    assert len(units) > 1
+    assert all(u["char_count"] <= 30000 for u in units)
