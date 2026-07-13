@@ -7,7 +7,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from compile_lib import count_chars, ensure_buffer_dirs
-from compile_lib.chunker import _split_text_by_paragraphs, build_compile_units
+from compile_lib.chunker import (
+    _ceil_half,
+    _split_long_sentence,
+    _split_text_by_paragraphs,
+    _tokenize_for_count,
+    build_compile_units,
+)
 from compile_lib.ingest import scan_inbox, classify_file, UnsupportedDocumentError
 from compile_lib.pdf_extractor import extract_pdf_toc_chunks, PdfExtractionError, _split_by_page_ranges
 
@@ -54,6 +60,30 @@ def test_count_chars_hyphenated_word():
 def test_count_chars_contraction():
     # "don't" 作为一个英文词，等效 2 个字符
     assert count_chars("don't") == 2
+
+
+def test_tokenize_for_count_matches_count_chars():
+    text = "Hello 世界，this is a test。"
+    tokens = _tokenize_for_count(text)
+    total_cost = sum(cost for _, cost in tokens)
+    assert _ceil_half(total_cost) == count_chars(text)
+
+
+def test_split_long_sentence_mixed_language():
+    # 中英文混合，每个英文单词 2 等效字符，每个中文字符 1 等效字符
+    sentence = "Hello World " * 10 + "世界" * 20
+    max_chars = 20
+    chunks = _split_long_sentence(sentence, max_chars)
+    assert len(chunks) > 1
+    assert all(count_chars(c) <= max_chars for c in chunks)
+
+
+def test_split_long_sentence_long_english():
+    sentence = "word " * 100
+    max_chars = 20
+    chunks = _split_long_sentence(sentence, max_chars)
+    assert len(chunks) > 1
+    assert all(count_chars(c) <= max_chars for c in chunks)
 
 
 def test_ensure_buffer_dirs(tmp_path):

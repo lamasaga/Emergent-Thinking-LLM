@@ -3,7 +3,12 @@
 import re
 from pathlib import Path
 
-from compile_lib import WORD_RE, count_chars
+from compile_lib import (
+    CHINESE_CHAR_COST_NUM,
+    ENGLISH_WORD_COST_NUM,
+    WORD_RE,
+    count_chars,
+)
 from compile_lib.pdf_extractor import extract_pdf_toc_chunks
 
 
@@ -19,25 +24,25 @@ def _flush_current(current: list[str], chunks: list[str]) -> list[str]:
     return []
 
 
-def _tokenize_for_count(text: str) -> list[tuple[str, int]]:
-    """将文本拆分为 (token, cost_numerator) 列表。
+def _ceil_half(total: int) -> int:
+    """将 2 倍精度成本转换为等效字符数（向上取整）。"""
+    return (total + 1) // 2
 
-    cost_numerator 按 count_chars 的规则以 2 倍精度累计：
-    - 中文字符：2（即等效 1 个字符）
-    - 英文单词：3（即 ceil(1.5) 的 2 倍精度）
-    - 其他字符：0
-    """
+
+def _tokenize_for_count(text: str) -> list[tuple[str, int]]:
+    """将文本拆分为 (token, cost_num) 列表，cost_num 为 2 倍精度成本。"""
     tokens = []
     i = 0
     n = len(text)
     while i < n:
         m = WORD_RE.match(text, i)
         if m:
-            tokens.append((m.group(0), 3))
+            word = m.group(0)
+            tokens.append((word, ENGLISH_WORD_COST_NUM))
             i = m.end()
         else:
             ch = text[i]
-            cost = 2 if "\u4e00" <= ch <= "\u9fff" else 0
+            cost = CHINESE_CHAR_COST_NUM if "\u4e00" <= ch <= "\u9fff" else 0
             tokens.append((ch, cost))
             i += 1
     return tokens
@@ -50,15 +55,15 @@ def _split_long_sentence(sentence: str, max_chars: int) -> list[str]:
 
     chunks = []
     current = []
-    current_num = 0
+    current_cost_num = 0
 
-    for token, token_num in _tokenize_for_count(sentence):
-        if current and (current_num + token_num + 1) // 2 > max_chars:
+    for token, token_cost_num in _tokenize_for_count(sentence):
+        if current and _ceil_half(current_cost_num + token_cost_num) > max_chars:
             chunks.append("".join(current))
             current = []
-            current_num = 0
+            current_cost_num = 0
         current.append(token)
-        current_num += token_num
+        current_cost_num += token_cost_num
 
     if current:
         chunks.append("".join(current))
