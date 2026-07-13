@@ -475,7 +475,7 @@ git config core.hooksPath hooks
 
 | 指令 | hooks 承担的确定性工作 | LLM 承担的语义工作 |
 |---|---|---|
-| `/compile` | 输入文件存在性检查、Buffer 命名规范校验、scratch 数量阈值检查、原始文档归档移动 | raw 文本的原子化拆解、暂定类型判断、决定是否自动触发 /digest |
+| `/compile` | 扫描与分类、编译单元生成、批次组织、调用 `scripts/validate_buffer.py` 与 `scripts/check_digest_trigger.py`、原始文档归档移动 | raw 文本的原子化拆解、暂定类型判断、决定是否自动触发 /digest |
 | `/construct` | 目录创建、frontmatter 模板校验、id 唯一性检查、结构信号扫描、变更清单格式化 | 主题识别、领域设计、整体重组方案、Profile 更新 |
 | `/digest` | frontmatter 补全、updated 字段更新、实例/引用上限检查 | 概念匹配、冲突检测、新建/丰富判断、Profile 变更报告 |
 | `/analyze` | Context Package 格式校验、输出文件命名、引用列表提取 | 推理、论证、风格化表达 |
