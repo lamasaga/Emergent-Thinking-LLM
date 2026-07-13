@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from compile_lib import count_chars
+
 
 try:
     import fitz  # PyMuPDF
@@ -15,8 +17,6 @@ class PdfExtractionError(RuntimeError):
 
 def _estimate_chars_per_page(doc: fitz.Document) -> float:
     """采样前 5 页估算平均每页等效中文字符数。"""
-    from compile_lib import count_chars
-
     samples = []
     try:
         for page in doc[:5]:
@@ -39,9 +39,12 @@ def _split_by_page_ranges(
     start: int = 0,
     end: int | None = None,
 ) -> list[dict]:
-    """按页码范围切分，尽量让每段等效中文字符数 ≤ max_chars。"""
-    from compile_lib import count_chars
+    """按页码范围切分，尽量让每段等效中文字符数 ≤ max_chars。
 
+    切分策略以估算的每页字符数为起点，按页码窗口组装文本后校验实际字符数。
+    若窗口超限且窗口仍大于单页，则缩小窗口重新切分；若单页本身已超过
+    max_chars，则接受该 chunk 作为下限保证。
+    """
     if end is None:
         end = len(doc)
     end = min(end, len(doc))
@@ -61,12 +64,21 @@ def _split_by_page_ranges(
             except Exception as e:
                 raise PdfExtractionError(f"提取页面文本失败: {e}") from e
         text = "\n".join(text_parts)
+        chars = count_chars(text)
+        if chars > max_chars and pages_per_chunk > 1:
+            pages_per_chunk = max(1, pages_per_chunk // 2)
+            continue
         chunks.append({
             "title": f"页码 {cursor + 1}-{chunk_end}",
             "page_range": f"{cursor + 1}-{chunk_end}",
             "text": text,
         })
+        pages_in_chunk = chunk_end - cursor
         cursor = chunk_end
+        # 根据实际密度动态调整下一窗口，避免过度保守
+        if chars > 0:
+            actual_chars_per_page = chars / pages_in_chunk
+            pages_per_chunk = max(1, int(max_chars / max(actual_chars_per_page, 1)))
     return chunks
 
 
@@ -75,8 +87,6 @@ def extract_pdf_toc_chunks(path: Path, max_chars: int = 30000) -> list[dict]:
     提取 PDF 文本并按目录/页码切分为编译单元。
     返回列表元素：{"title", "page_range", "text", "char_count"}
     """
-    from compile_lib import count_chars
-
     if max_chars <= 0:
         raise ValueError("max_chars 必须大于 0")
 
