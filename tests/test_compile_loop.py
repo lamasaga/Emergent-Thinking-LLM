@@ -10,14 +10,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from compile_lib import count_chars, ensure_buffer_dirs
 from compile_lib.chunker import (
     _ceil_half,
+    _split_dialogue_by_turns,
     _split_long_sentence,
     _split_text_by_paragraphs,
     _tokenize_for_count,
     build_compile_units,
 )
-from compile_lib.ingest import scan_inbox, classify_file, UnsupportedDocumentError
+from compile_lib.ingest import (
+    UnsupportedDocumentError,
+    build_compile_plan,
+    classify_file,
+    extract_metadata,
+    predict_genre,
+    scan_inbox,
+)
 from compile_lib.pdf_extractor import extract_pdf_toc_chunks, PdfExtractionError, _split_by_page_ranges
-from compile_lib.batch_runner import build_batches, format_batch_prompt, parse_llm_buffers, write_buffer
+from compile_lib.batch_runner import (
+    GENRE_PROMPTS,
+    build_batches,
+    format_batch_prompt,
+    get_genre_prompt,
+    parse_llm_buffers,
+    write_buffer,
+)
 
 
 def _make_pdf(path: Path, pages: list[str], toc: list | None = None, font_size: float = 12.0):
@@ -424,6 +439,7 @@ def test_compile_unit_schema(tmp_path):
     expected_fields = {
         "unit_id", "source_path", "doc_type", "title",
         "page_range", "section", "char_count", "text", "archivable",
+        "genre",
     }
     assert set(unit.keys()) == expected_fields
     assert unit["unit_id"] == "schema_test-001"
@@ -603,3 +619,360 @@ def test_compile_main_dry_run_with_text(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "批次" in captured.out
     assert "提示词" in captured.out or "prompt" in captured.out.lower()
+
+
+# ---- 体裁识别（genre）相关测试 ----
+
+
+def _meta(**kwargs):
+    base = {
+        "char_count": 0,
+        "dialogue_ratio": 0.0,
+        "dialogue_lines": 0,
+        "dialogue_speakers": 0,
+        "academic_hits": 0,
+        "heading_count": 0,
+        "toc_chapters": 0,
+        "page_count": 0,
+    }
+    base.update(kwargs)
+    return base
+
+
+def test_predict_genre_book_by_toc():
+    assert predict_genre(_meta(toc_chapters=5, page_count=50), "pdf") == "book"
+
+
+def test_predict_genre_book_by_pages():
+    assert predict_genre(_meta(page_count=300), "pdf") == "book"
+
+
+def test_predict_genre_paper_pdf():
+    assert predict_genre(_meta(academic_hits=3, page_count=12), "pdf") == "paper"
+
+
+def test_predict_genre_pdf_unknown():
+    assert predict_genre(_meta(page_count=10), "pdf") == "unknown"
+
+
+def test_predict_genre_paper_text():
+    assert predict_genre(_meta(academic_hits=2, char_count=8000), "text") == "paper"
+
+
+def test_predict_genre_dialogue():
+    meta = _meta(
+        dialogue_ratio=0.5,
+        dialogue_lines=6,
+        dialogue_speakers=2,
+        char_count=8000,
+    )
+    assert predict_genre(meta, "text") == "dialogue"
+
+
+def test_predict_genre_single_label_line_not_dialogue():
+    # 「灵感：xxx」这类单行标签式笔记不应预判为对话录
+    meta = _meta(
+        dialogue_ratio=1.0,
+        dialogue_lines=1,
+        dialogue_speakers=1,
+        char_count=50,
+    )
+    assert predict_genre(meta, "text") == "scrap"
+
+
+def test_predict_genre_scrap():
+    assert predict_genre(_meta(char_count=500, heading_count=0), "text") == "scrap"
+
+
+def test_predict_genre_short_text_with_headings_is_essay():
+    assert predict_genre(_meta(char_count=500, heading_count=2), "text") == "essay"
+
+
+def test_predict_genre_essay():
+    assert predict_genre(_meta(char_count=8000, heading_count=1), "text") == "essay"
+
+
+def test_extract_metadata_dialogue_text(tmp_path):
+    f = tmp_path / "chat.md"
+    f.write_text(
+        "张三：你好\n李四：你好\n今天天气不错\n张三：再见\n",
+        encoding="utf-8",
+    )
+    meta = extract_metadata(f, "text")
+    assert meta["dialogue_ratio"] > 0.3
+    assert meta["char_count"] > 0
+    assert meta["heading_count"] == 0
+
+
+def test_extract_metadata_academic_text(tmp_path):
+    f = tmp_path / "paper.md"
+    f.write_text("摘要：本文研究……\n关键词：测试\n参考文献\n", encoding="utf-8")
+    meta = extract_metadata(f, "text")
+    assert meta["academic_hits"] >= 2
+
+
+def test_extract_metadata_timestamp_not_dialogue(tmp_path):
+    f = tmp_path / "log.md"
+    f.write_text("12:30 开会\n13:00 吃饭\n14:00 写代码\n", encoding="utf-8")
+    meta = extract_metadata(f, "text")
+    assert meta["dialogue_ratio"] == 0.0
+
+
+def test_build_compile_plan_text(tmp_path):
+    f = tmp_path / "essay.md"
+    f.write_text("我的思考。\n" * 100, encoding="utf-8")
+    plan = build_compile_plan([{"path": f, "doc_type": "text"}])
+    assert len(plan) == 1
+    item = plan[0]
+    assert item["predicted_genre"] in {"essay", "scrap", "dialogue", "paper", "unknown"}
+    assert item["sample"]
+    assert item["metadata"]["char_count"] > 0
+
+
+# ---- 对话轮次切分 ----
+
+
+def test_split_dialogue_by_turns_basic():
+    text = "张三：第一句话。\n继续补充。\n李四：回应。\n张三：再说。"
+    chunks = _split_dialogue_by_turns(text, max_chars=1000)
+    assert len(chunks) == 1
+    assert chunks[0].count("张三：") == 2
+
+
+def test_split_dialogue_respects_max_chars():
+    turns = [f"甲：{'话' * 20}" for _ in range(10)]
+    text = "\n".join(turns)
+    chunks = _split_dialogue_by_turns(text, max_chars=50)
+    assert len(chunks) > 1
+    assert all(count_chars(c) <= 50 for c in chunks)
+    # 轮次不被切散：说话人标记总数保持不变
+    assert sum(c.count("甲：") for c in chunks) == 10
+
+
+def test_split_dialogue_long_turn_fallback():
+    text = "甲：" + "话" * 100 + "\n乙：短。"
+    chunks = _split_dialogue_by_turns(text, max_chars=30)
+    assert len(chunks) >= 2
+    assert all(count_chars(c) <= 30 for c in chunks)
+
+
+def test_build_compile_units_dialogue_genre(tmp_path):
+    f = tmp_path / "chat.md"
+    f.write_text("甲：" + "话" * 40 + "\n乙：" + "应" * 40, encoding="utf-8")
+    units = build_compile_units(
+        [{"path": f, "doc_type": "text"}],
+        max_chars=50,
+        genres={"chat.md": "dialogue"},
+    )
+    assert units[0]["genre"] == "dialogue"
+    # 轮次边界不被切散
+    assert sum(u["text"].count("甲：") for u in units) == 1
+    assert sum(u["text"].count("乙：") for u in units) == 1
+
+
+def test_build_compile_units_genre_default_none(tmp_path):
+    f = tmp_path / "plain.md"
+    f.write_text("普通文本。", encoding="utf-8")
+    units = build_compile_units([{"path": f, "doc_type": "text"}], max_chars=30000)
+    assert units[0]["genre"] is None
+
+
+# ---- 分体裁 prompt ----
+
+
+def test_genre_prompts_cover_five_genres():
+    for g in ("book", "paper", "essay", "dialogue", "scrap", "generic"):
+        assert g in GENRE_PROMPTS
+    assert "推理路径" in GENRE_PROMPTS["essay"]
+    assert "说话人" in GENRE_PROMPTS["dialogue"]
+    assert "全书结构" in GENRE_PROMPTS["book"]
+    assert "基线" in GENRE_PROMPTS["paper"]
+    assert "种子" in GENRE_PROMPTS["scrap"]
+
+
+def test_get_genre_prompt_unknown_falls_back():
+    assert get_genre_prompt("tutorial") == GENRE_PROMPTS["generic"]
+    assert get_genre_prompt(None) == GENRE_PROMPTS["generic"]
+
+
+def test_get_genre_prompt_deep_suffix():
+    assert "深度编译" in get_genre_prompt("essay", deep=True)
+    assert "深度编译" not in get_genre_prompt("essay")
+
+
+def _unit(genre=None, text="内容", unit_id="u1"):
+    return {
+        "unit_id": unit_id,
+        "source_path": Path("00-Inbox/a.md"),
+        "doc_type": "text",
+        "title": "a.md",
+        "section": "",
+        "page_range": "",
+        "char_count": 10,
+        "text": text,
+        "genre": genre,
+    }
+
+
+def test_format_batch_prompt_genre_from_units():
+    prompt = format_batch_prompt([_unit(genre="dialogue")])
+    assert "对话录" in prompt
+
+
+def test_format_batch_prompt_genre_param_overrides():
+    prompt = format_batch_prompt([_unit(genre=None)], genre="essay")
+    assert "随笔" in prompt
+
+
+def test_format_batch_prompt_deep():
+    prompt = format_batch_prompt([_unit(genre="essay")], deep=True)
+    assert "深度编译" in prompt
+
+
+# ---- Buffer 可选字段 genre/perspective ----
+
+
+def test_write_buffer_with_genre_and_perspective(tmp_path, monkeypatch):
+    monkeypatch.setattr("compile_lib.batch_runner.BUFFER_DIR", tmp_path)
+    buffer = {
+        "title": "风格线索",
+        "type": "note",
+        "source": "essay.md",
+        "genre": "essay",
+        "perspective": "self",
+        "body": "正文",
+    }
+    path = write_buffer(buffer, "note")
+    content = path.read_text(encoding="utf-8")
+    _, fm_text, _ = content.split("---", 2)
+    parsed = yaml.safe_load(fm_text)
+    assert parsed["genre"] == "essay"
+    assert parsed["perspective"] == "self"
+
+
+def test_write_buffer_without_optional_fields(tmp_path, monkeypatch):
+    monkeypatch.setattr("compile_lib.batch_runner.BUFFER_DIR", tmp_path)
+    buffer = {"title": "普通", "type": "note", "source": "s", "body": "b"}
+    path = write_buffer(buffer, "note")
+    content = path.read_text(encoding="utf-8")
+    _, fm_text, _ = content.split("---", 2)
+    parsed = yaml.safe_load(fm_text)
+    assert "genre" not in parsed
+    assert "perspective" not in parsed
+
+
+def test_parse_llm_buffers_with_genre():
+    raw = """
+---
+title: 测试
+type: note
+genre: dialogue
+perspective: self
+---
+正文。
+"""
+    buffers = parse_llm_buffers(raw, "default")
+    assert buffers[0]["genre"] == "dialogue"
+    assert buffers[0]["perspective"] == "self"
+
+
+# ---- compile_loop 入口参数 ----
+
+
+def test_parse_genres_arg_valid():
+    from compile_loop import parse_genres_arg
+    assert parse_genres_arg("a.md=essay, b.pdf=book") == {
+        "a.md": "essay",
+        "b.pdf": "book",
+    }
+    assert parse_genres_arg("") == {}
+
+
+def test_parse_genres_arg_invalid():
+    from compile_loop import parse_genres_arg
+    with pytest.raises(ValueError):
+        parse_genres_arg("a.md")
+    with pytest.raises(ValueError):
+        parse_genres_arg("a.md=")
+
+
+def _setup_dirs(tmp_path, monkeypatch):
+    inbox = tmp_path / "00-Inbox"
+    inbox.mkdir()
+    buffer_dir = tmp_path / "05-Buffer"
+    buffer_dir.mkdir()
+    archive_dir = tmp_path / "03-Archive"
+    archive_dir.mkdir()
+
+    import compile_loop
+    monkeypatch.setattr("compile_loop.INBOX_DIR", inbox)
+    monkeypatch.setattr("compile_lib.BUFFER_DIR", buffer_dir)
+    monkeypatch.setattr("compile_loop.ARCHIVE_DIR", archive_dir)
+    return inbox
+
+
+def test_compile_main_plan_mode(tmp_path, monkeypatch, capsys):
+    inbox = _setup_dirs(tmp_path, monkeypatch)
+    (inbox / "essay.md").write_text("我想了很多。" * 100, encoding="utf-8")
+
+    import compile_loop
+    result = compile_loop.main(["--plan"])
+    assert result == 0
+
+    out = capsys.readouterr().out
+    assert "预判体裁" in out
+    assert "开头样本" in out
+    # --plan 不归档、不移除原始文档
+    assert (inbox / "essay.md").exists()
+
+
+def test_compile_main_genres_override(tmp_path, monkeypatch, capsys):
+    inbox = _setup_dirs(tmp_path, monkeypatch)
+    (inbox / "chat.md").write_text("甲：你好。\n乙：你好。\n" * 50, encoding="utf-8")
+
+    import compile_loop
+    result = compile_loop.main(["--dry-run", "--genres", "chat.md=dialogue"])
+    assert result == 0
+
+    out = capsys.readouterr().out
+    assert "对话录" in out
+    assert "LLM 确认" in out
+    assert "体裁：dialogue" in out
+
+
+def test_compile_main_genres_invalid(tmp_path, monkeypatch, capsys):
+    inbox = _setup_dirs(tmp_path, monkeypatch)
+    (inbox / "a.md").write_text("内容", encoding="utf-8")
+
+    import compile_loop
+    result = compile_loop.main(["--genres", "a.md"])
+    assert result == 1
+
+
+def test_compile_main_deep_single_doc_batches(tmp_path, monkeypatch, capsys):
+    inbox = _setup_dirs(tmp_path, monkeypatch)
+    (inbox / "a.md").write_text("短想法一。", encoding="utf-8")
+    (inbox / "b.md").write_text("短想法二。", encoding="utf-8")
+
+    import compile_loop
+    result = compile_loop.main(["--dry-run", "--deep"])
+    assert result == 0
+
+    out = capsys.readouterr().out
+    assert "深度编译" in out
+    # 深度模式下两篇文档不合并批次
+    assert "批次 2/2" in out
+
+
+def test_compile_main_normal_merges_same_genre(tmp_path, monkeypatch, capsys):
+    inbox = _setup_dirs(tmp_path, monkeypatch)
+    (inbox / "a.md").write_text("短想法一。", encoding="utf-8")
+    (inbox / "b.md").write_text("短想法二。", encoding="utf-8")
+
+    import compile_loop
+    result = compile_loop.main(["--dry-run"])
+    assert result == 0
+
+    out = capsys.readouterr().out
+    # 普通模式下同体裁（scrap）短文档合并为一个批次
+    assert "批次 1/1" in out

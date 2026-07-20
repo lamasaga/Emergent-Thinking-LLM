@@ -20,19 +20,128 @@ VALID_BUFFER_TYPES = {
     "group", "model", "method", "conflict", "note",
 }
 
-
-COMPILE_SYSTEM_PROMPT = """你是一位个人知识库的编译助手。你的任务是将输入的原始文本进行原子化拆解，生成 Buffer 中间产物。
-
-请遵循以下规则：
-1. 提取值得保留的观察、立场、概念、方法、冲突、实体等碎片。
+# 分体裁提取策略的公共输出规则
+_FORMAT_RULES = """请遵循以下输出规则：
+1. 每个碎片单独输出为一个 YAML frontmatter + Markdown 正文块。
 2. 为每个碎片指定一个暂定 type，必须从以下 10 个类型中选择：
    domain, notion, principle, phenomenon, entity, group, model, method, conflict, note。
-3. 若无法判定 type，先放入 note。
-4. 每个碎片单独输出为一个 YAML frontmatter + Markdown 正文块。
-5. 禁止使用 [[ ]] 链接；提及已有概念时用加粗即可。
-6. source 字段必须精确标注原始来源。
-7. 宁可少拆，不要硬造；允许拆解不完整。
-"""
+   若无法判定 type，先放入 note。
+3. 禁止使用 [[ ]] 链接；提及已有概念时用加粗即可。
+4. source 字段必须精确标注原始来源。
+5. frontmatter 增加 genre 字段（来源体裁）；涉及作者本人作品时增加 perspective: self，外部作品为 perspective: external。
+6. 宁可少拆，不要硬造；允许拆解不完整。"""
+
+# 学术九维提取说明（论文/图书/通用策略共用）
+_ACADEMIC_DIMENSIONS = """从以下维度提取原子碎片，每个维度独立成块：
+a. problem：核心问题、研究动机。
+b. claim：作者核心主张、立场、结论性判断。
+c. model：提出的模型/框架/解释结构，含关键组件与关系。
+d. method：方法/流程/实现细节，含输入、步骤、输出。
+e. evidence：实验/证据/评测，含数据集、指标、结果、与基线的对比。
+f. limit：限制、代价、未解决问题、适用范围边界。
+g. conflict：与现有工作、常识或本知识库已有观点的张力。
+h. connection：与其他文档、已知概念的潜在关联假设。
+i. quote：值得保留的原文摘录（≤3 条/碎片），必须标注页码/章节。"""
+
+GENRE_PROMPTS = {
+    "book": f"""你是一位个人知识库的编译助手。当前材料体裁为【图书】。
+
+按目录章节切分的文本将逐单元提供。请深度拆解：
+{_ACADEMIC_DIMENSIONS}
+
+图书特有要求：
+- 重点关注 model 维度：章节间关系与全书论证主线。
+- 额外产出 1 个「全书结构」碎片（type: model 或 note），概括论证主线与章节骨架。
+- 来源锚点精确到「第 X 章 / 第 X 页」。
+
+{_FORMAT_RULES}""",
+
+    "paper": f"""你是一位个人知识库的编译助手。当前材料体裁为【论文】。
+
+{_ACADEMIC_DIMENSIONS}
+
+论文特有要求：
+- evidence 碎片必须含数据集、指标、与基线对比。
+- 来源锚点精确到 arXiv ID / DOI / 图表编号。
+
+{_FORMAT_RULES}""",
+
+    "essay": f"""你是一位个人知识库的编译助手。当前材料体裁为【随笔】，默认是用户本人的思想素材。
+
+目标不是「内容摘要」，而是「思想建模」。从以下维度提取原子碎片：
+a. stance：核心立场与判断。
+b. reasoning：推理路径——作者怎么想的，而不只是想的是什么。
+c. notion/model：提出的概念或心智模型。
+d. experience：作为论据的个人经历与观察。
+e. style：语言风格线索（标志性句式、修辞、术语偏好）。
+f. tension：犹豫、自相矛盾、未解决的纠结。
+g. quote：原文摘录（≤3 条/碎片）。
+
+随笔特有要求：
+- style/reasoning/tension 类碎片是 02-Profile 的直接种子素材，提取优先级最高。
+- 区分作者原意与编译者的解读。
+
+{_FORMAT_RULES}""",
+
+    "dialogue": f"""你是一位个人知识库的编译助手。当前材料体裁为【对话录】，默认涉及用户本人。
+
+对话是思维过程的直接证据，推理模式提取优先于结论提取。从以下维度提取原子碎片：
+a. stance：每个说话人的立场及观点演变（标注说话人）。
+b. turn：思维转折点——什么改变/推进了想法。
+c. disagreement：分歧与未解决冲突 → conflict 碎片。
+d. consensus：达成的共识。
+e. question：被提出但未回答的好问题。
+f. style：用户本人的表达风格线索。
+g. quote：原话摘录，正文必须标注说话人。
+
+对话录特有要求：
+- 若输入文本按轮次切分，可在话题转折点调整边界，但不得丢失说话人标签。
+- quote 碎片正文必须带说话人名。
+
+{_FORMAT_RULES}""",
+
+    "scrap": f"""你是一位个人知识库的编译助手。当前材料体裁为【零散材料】。
+
+轻量提取，每条想法/每篇短文档产出 1-3 个碎片即可：
+a. core：想法内核。
+b. context：记录背景（若可推断，标注为推断）。
+c. connection：潜在关联假设。
+d. quote：原文摘录。
+
+零散材料特有要求：
+- 价值在「种子」不在「完整」；禁止为凑数把一句话硬拆成多个碎片。
+- 多篇短文档合并提供时，每个碎片独立归属其来源文档。
+
+{_FORMAT_RULES}""",
+
+    "generic": f"""你是一位个人知识库的编译助手。你的任务是将输入的原始文本进行原子化拆解，生成 Buffer 中间产物。
+
+{_ACADEMIC_DIMENSIONS}
+
+{_FORMAT_RULES}""",
+}
+
+# 深度编译模式附加指令
+DEEP_MODE_SUFFIX = """
+
+【深度编译模式】
+- 碎片数量不设上限，按信息密度榨取；但仍禁止硬造碎片。
+- 多遍扫描：先主线/结构，再逐节深挖，最后横向挖掘（冲突、关联、风格线索）。
+- 每条碎片含更完整上下文，可多条摘录，并与同文档其他碎片形成指涉链。
+- 体裁深挖项：论文加图表/公式/实验设计细节；图书加逐章要点与概念谱系；
+  随笔逐段挖 reasoning/style/tension；对话录加观点演变弧线；零散材料补背景重构。
+- 输出末尾附维度覆盖度说明：哪些维度有产出、哪些没有及原因。"""
+
+# 兼容旧引用
+COMPILE_SYSTEM_PROMPT = GENRE_PROMPTS["generic"]
+
+
+def get_genre_prompt(genre: str | None, deep: bool = False) -> str:
+    """获取体裁对应的 system prompt；未知体裁回退到 generic。"""
+    prompt = GENRE_PROMPTS.get(genre or "", GENRE_PROMPTS["generic"])
+    if deep:
+        prompt += DEEP_MODE_SUFFIX
+    return prompt
 
 
 def build_batches(units: list[dict], max_chars: int = 30000) -> list[list[dict]]:
@@ -66,9 +175,17 @@ def build_batches(units: list[dict], max_chars: int = 30000) -> list[list[dict]]
     return batches
 
 
-def format_batch_prompt(units: list[dict]) -> str:
-    """将一批编译单元格式化为给 LLM 的提示词。"""
-    parts = [COMPILE_SYSTEM_PROMPT, "", f"本批共 {len(units)} 个片段，总字数约 {sum(u['char_count'] for u in units)}：", ""]
+def format_batch_prompt(
+    units: list[dict],
+    genre: str | None = None,
+    deep: bool = False,
+) -> str:
+    """将一批编译单元格式化为给 LLM 的提示词，按体裁使用对应提取策略。"""
+    if genre is None and units:
+        genre = units[0].get("genre")
+    system_prompt = get_genre_prompt(genre, deep=deep)
+
+    parts = [system_prompt, "", f"本批共 {len(units)} 个片段，总字数约 {sum(u['char_count'] for u in units)}：", ""]
 
     for idx, unit in enumerate(units, 1):
         source_parts = [unit["source_path"].name, unit["title"]]
@@ -163,6 +280,10 @@ def parse_llm_buffers(raw_output: str, default_source: str) -> list[dict]:
             "title": str(fm.get("title", "未命名碎片")),
             "type": btype,
             "source": str(fm.get("source", default_source)),
+            "genre": str(fm["genre"]) if fm.get("genre") else None,
+            "perspective": (
+                str(fm["perspective"]) if fm.get("perspective") else None
+            ),
             "body": body,
         })
 
@@ -209,6 +330,11 @@ def write_buffer(buffer: dict, subtype: str, now: datetime | None = None) -> Pat
         "source": buffer["source"],
         "status": "scratch",
     }
+    # 可选字段：来源体裁与作者视角（供 /digest 判断消费方式）
+    if buffer.get("genre"):
+        frontmatter["genre"] = buffer["genre"]
+    if buffer.get("perspective"):
+        frontmatter["perspective"] = buffer["perspective"]
     content = "---\n" + yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False) + "---\n\n" + buffer["body"]
     target.write_text(content, encoding="utf-8")
     return target

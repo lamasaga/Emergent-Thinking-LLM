@@ -9,6 +9,7 @@ from compile_lib import (
     WORD_RE,
     count_chars,
 )
+from compile_lib.ingest import DIALOGUE_LINE_RE
 from compile_lib.pdf_extractor import extract_pdf_toc_chunks
 
 
@@ -133,23 +134,82 @@ def _split_text_by_paragraphs(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
-def build_compile_units(docs: list[dict], max_chars: int = 30000) -> list[dict]:
+def _split_dialogue_by_turns(text: str, max_chars: int) -> list[str]:
+    """
+    按说话人轮次切分对话录，确保每个 chunk 的等效字符数 ≤ max_chars。
+
+    以行首说话人模式（如「张三：」「Q:」）识别轮次边界，聚合同一话题下
+    的连续轮次；单个轮次超限时回退到段落切分。不会把同一轮对话切散。
+    """
+    if max_chars <= 0:
+        raise ValueError("max_chars 必须为正数")
+    lines = text.split("\n")
+
+    # 第一步：按说话人边界聚合轮次
+    turns = []
+    current: list[str] = []
+    for line in lines:
+        if DIALOGUE_LINE_RE.match(line.strip()) and current:
+            turns.append("\n".join(current))
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        turns.append("\n".join(current))
+
+    # 第二步：按 max_chars 合并相邻轮次
+    chunks = []
+    buf: list[str] = []
+    buf_len = 0
+    for turn in turns:
+        turn_len = count_chars(turn)
+        if turn_len > max_chars:
+            # 单轮超限：flush 后按段落切分该轮
+            if buf:
+                chunks.append("\n".join(buf))
+                buf, buf_len = [], 0
+            chunks.extend(_split_text_by_paragraphs(turn, max_chars))
+            continue
+        if buf_len + turn_len > max_chars and buf:
+            chunks.append("\n".join(buf))
+            buf, buf_len = [], 0
+        buf.append(turn)
+        buf_len += turn_len
+    if buf:
+        chunks.append("\n".join(buf))
+
+    return [c for c in chunks if c.strip()]
+
+
+def build_compile_units(
+    docs: list[dict],
+    max_chars: int = 30000,
+    genres: dict | None = None,
+) -> list[dict]:
     """
     将扫描得到的文档列表转换为编译单元队列。
     每个单元包含：unit_id, source_path, doc_type, title, page_range,
-                  section, char_count, text, archivable
+                  section, char_count, text, archivable, genre
+
+    genres：{文件名: 体裁}，按 00-Inbox/ 中的文件名精确匹配；
+    对话录（dialogue）文本文档使用轮次切分，其余沿用段落/PDF 章节逻辑。
     """
     if max_chars <= 0:
         raise ValueError("max_chars 必须为正数")
     units = []
+    genres = genres or {}
 
     for doc in docs:
         path: Path = doc["path"]
         doc_type = doc["doc_type"]
+        genre = genres.get(path.name)
 
         if doc_type == "text":
             text = path.read_text(encoding="utf-8")
-            chunks = _split_text_by_paragraphs(text, max_chars)
+            if genre == "dialogue":
+                chunks = _split_dialogue_by_turns(text, max_chars)
+            else:
+                chunks = _split_text_by_paragraphs(text, max_chars)
             for idx, chunk_text in enumerate(chunks):
                 units.append({
                     "unit_id": f"{path.stem}-{idx + 1:03d}",
@@ -161,6 +221,7 @@ def build_compile_units(docs: list[dict], max_chars: int = 30000) -> list[dict]:
                     "char_count": count_chars(chunk_text),
                     "text": chunk_text,
                     "archivable": False,
+                    "genre": genre,
                 })
 
         elif doc_type == "pdf":
@@ -176,6 +237,7 @@ def build_compile_units(docs: list[dict], max_chars: int = 30000) -> list[dict]:
                     "char_count": chunk["char_count"],
                     "text": chunk["text"],
                     "archivable": False,
+                    "genre": genre,
                 })
 
         else:
